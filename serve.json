@@ -1,0 +1,10 @@
+{
+  "public": ".",
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/create/svg/vectorize", "destination": "/index.html" },
+    { "source": "/create/svg/vectorize/**", "destination": "/index.html" },
+    { "source": "/vectorize", "destination": "/index.html" },
+    { "source": "/vectorize/**", "destination": "/index.html" }
+  ]
+}

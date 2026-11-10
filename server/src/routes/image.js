@@ -1,5 +1,5 @@
 import express from 'express';
-import { generateImage } from '../controllers/imageController.js';
+import { generateImage, executePreciseEdit, executeUpscaleImage, executeVectorizeImage, executeVectorIllustration } from '../controllers/imageController.js';
 
 const router = express.Router();
 
@@ -9,5 +9,12 @@ const router = express.Router();
  */
 router.post('/', generateImage);
 router.post('/generate', generateImage);
+router.post('/precise-edit', executePreciseEdit);
+router.post('/edit', executePreciseEdit);
+router.post('/smart-edit', executePreciseEdit);
+router.post('/upscale', executeUpscaleImage);
+router.post('/vectorize', executeVectorizeImage);
+router.post('/vector-illustration', executeVectorIllustration);
+router.post('/illustration', executeVectorIllustration);
 
 export default router;

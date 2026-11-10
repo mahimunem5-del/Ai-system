@@ -1,0 +1,5 @@
+/create/svg/vectorize    /index.html   200
+/create/svg/vectorize/*  /index.html   200
+/vectorize               /index.html   200
+/vectorize/*             /index.html   200
+

@@ -72,17 +72,20 @@ export class InternalServerError extends AppError {
  */
 export function formatErrorForClient(err, requestId = null) {
   const isOperational = err instanceof AppError;
-  const statusCode = isOperational ? err.statusCode : 500;
-  const code = isOperational ? err.code : 'INTERNAL_SERVER_ERROR';
+  const statusCode = isOperational ? err.statusCode : (err.statusCode || err.status || 500);
+  const code = isOperational ? err.code : (err.code || err.type || 'INTERNAL_SERVER_ERROR');
 
   // Scrub any accidentally included keys in error message
-  let safeMessage = isOperational ? err.message : 'An unexpected error occurred. Please try again.';
-  safeMessage = safeMessage.replace(/sk-[a-zA-Z0-9_\-]{16,}/g, '[REDACTED]');
+  let safeMessage = (isOperational || err.status || err.statusCode) ? err.message : 'An unexpected error occurred. Please try again.';
+  if (typeof safeMessage === 'string') {
+    safeMessage = safeMessage.replace(/sk-[a-zA-Z0-9_\-]{16,}/g, '[REDACTED]');
+  }
 
   return {
     statusCode,
     body: {
       success: false,
+      message: safeMessage,
       error: {
         code,
         message: safeMessage,

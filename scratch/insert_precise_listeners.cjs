@@ -1,0 +1,121 @@
+const fs = require('fs');
+
+const path = 'index.html';
+const raw = fs.readFileSync(path, 'utf8');
+const isCRLF = raw.includes('\r\n');
+let lines = raw.split(/\r?\n/);
+
+const idx = lines.findIndex((l, i) => i > 20950 && l.trim() === 'renderStudioAssetsGallery();');
+if (idx === -1) {
+  console.error('Line not found around 21000!');
+  process.exit(1);
+}
+
+console.log(`Found target at line ${idx}`);
+
+const preciseListeners = [
+  '            // Precise Edit Controls Event Listeners',
+  '            const maskBtn = document.getElementById("studio-precise-edit-mask-btn");',
+  '            if (maskBtn) {',
+  '                maskBtn.addEventListener("click", () => {',
+  '                    showStudioToast("Mask & context window coming soon");',
+  '                });',
+  '            }',
+  '',
+  '            const removeSrcBtn = document.getElementById("studio-precise-edit-remove-src-btn");',
+  '            if (removeSrcBtn) {',
+  '                removeSrcBtn.addEventListener("click", () => {',
+  '                    exitStudioPreciseEdit();',
+  '                    showStudioToast("Exited edit mode");',
+  '                });',
+  '            }',
+  '',
+  '            const applyPreciseBtn = document.getElementById("studio-apply-precise-edit-btn");',
+  '            if (applyPreciseBtn) {',
+  '                applyPreciseBtn.addEventListener("click", applyStudioPreciseEdit);',
+  '            }',
+  '',
+  '            // Precise Edit Weight Dropdown',
+  '            const weightBtn = document.getElementById("studio-precise-edit-weight-btn");',
+  '            const weightDropdown = document.getElementById("studio-precise-edit-weight-dropdown");',
+  '            if (weightBtn && weightDropdown) {',
+  '                weightBtn.addEventListener("click", (e) => {',
+  '                    e.stopPropagation();',
+  '                    const isHidden = weightDropdown.classList.contains("hidden");',
+  '                    closeAllStudioDropdowns();',
+  '                    if (isHidden) weightDropdown.classList.remove("hidden");',
+  '                });',
+  '            }',
+  '            document.querySelectorAll(".studio-precise-weight-option").forEach(opt => {',
+  '                opt.addEventListener("click", (e) => {',
+  '                    e.stopPropagation();',
+  '                    const val = opt.dataset.weight;',
+  '                    studioPreciseEditState.editWeight = val;',
+  '                    const label = document.getElementById("studio-precise-edit-weight-label");',
+  '                    if (label) label.textContent = val;',
+  '                    document.querySelectorAll(".studio-precise-weight-option").forEach(o => {',
+  '                        const active = o.dataset.weight === val;',
+  '                        o.classList.toggle("bg-slate-100/70", active);',
+  '                        o.classList.toggle("dark:bg-white/10", active);',
+  '                        o.querySelector(".studio-precise-weight-check")?.classList.toggle("hidden", !active);',
+  '                    });',
+  '                    if (weightDropdown) weightDropdown.classList.add("hidden");',
+  '                });',
+  '            });',
+  '',
+  '            // Precise Edit Variation Count Dropdown',
+  '            const preciseCountBtn = document.getElementById("studio-precise-edit-count-btn");',
+  '            const preciseCountDropdown = document.getElementById("studio-precise-edit-count-dropdown");',
+  '            if (preciseCountBtn && preciseCountDropdown) {',
+  '                preciseCountBtn.addEventListener("click", (e) => {',
+  '                    e.stopPropagation();',
+  '                    const isHidden = preciseCountDropdown.classList.contains("hidden");',
+  '                    closeAllStudioDropdowns();',
+  '                    if (isHidden) preciseCountDropdown.classList.remove("hidden");',
+  '                });',
+  '            }',
+  '            document.querySelectorAll(".studio-precise-count-option").forEach(opt => {',
+  '                opt.addEventListener("click", (e) => {',
+  '                    e.stopPropagation();',
+  '                    const countVal = parseInt(opt.dataset.count, 10) || 1;',
+  '                    const labelText = opt.dataset.label || `${countVal} (${countVal} image${countVal > 1 ? "s" : ""})`;',
+  '                    studioPreciseEditState.variationCount = countVal;',
+  '                    const label = document.getElementById("studio-precise-edit-count-label");',
+  '                    if (label) label.textContent = labelText;',
+  '                    document.querySelectorAll(".studio-precise-count-option").forEach(o => {',
+  '                        const active = o.dataset.count === String(countVal);',
+  '                        o.classList.toggle("bg-slate-100/70", active);',
+  '                        o.classList.toggle("dark:bg-white/10", active);',
+  '                        o.querySelector(".studio-precise-count-check")?.classList.toggle("hidden", !active);',
+  '                    });',
+  '                    if (preciseCountDropdown) preciseCountDropdown.classList.add("hidden");',
+  '                });',
+  '            });',
+  '',
+  '            // Precise Edit Reference File Input',
+  '            const preciseRefInput = document.getElementById("studio-precise-edit-ref-input");',
+  '            if (preciseRefInput) {',
+  '                preciseRefInput.addEventListener("change", (e) => {',
+  '                    const file = e.target.files && e.target.files[0];',
+  '                    if (file) {',
+  '                        const reader = new FileReader();',
+  '                        reader.onload = (evt) => {',
+  '                            studioPreciseEditState.referenceImages.push({',
+  '                                dataUrl: evt.target.result,',
+  '                                name: file.name',
+  '                            });',
+  '                            renderStudioPreciseEditReferenceSlots();',
+  '                            showStudioToast("Reference image added");',
+  '                        };',
+  '                        reader.readAsDataURL(file);',
+  '                    }',
+  '                    preciseRefInput.value = "";',
+  '                });',
+  '            }',
+  ''
+];
+
+lines.splice(idx, 0, ...preciseListeners);
+fs.writeFileSync(path, lines.join(isCRLF ? '\r\n' : '\n'), 'utf8');
+console.log('Inserted precise edit listeners successfully!');
+

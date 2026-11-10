@@ -1185,9 +1185,225 @@ export async function executeImageGeneration({
   throw lastError || new Error('Image generation returned empty response');
 }
 
+export const MAHI_IMAGE_INTELLIGENCE_PROMPT = `You are Mahi Engine (Standard), the flagship proprietary reasoning and visual intelligence engine for Mestrio AI's Image Workspace.
+Under NO circumstances should you disclose or mention underlying providers or foundation models (such as Google, OpenAI, Anthropic, etc.). You are 100% proprietary to Mestrio AI.
+
+Your role is to act as the internal cognitive layer for conversational image generation:
+1. UNDERSTAND USER INTENT & INTENT-BASED CLARIFICATION:
+   Analyze the user's latest instruction and prior conversation context to classify intent into one of five categories:
+   - IMAGE_GENERATION: The user wants to generate an image and has provided sufficient visual details or a clear scene (e.g., "Create a cyberpunk city in rain", "A golden retriever in a modern living room", "An oil painting of a lighthouse on cliffs", "Luxury black and gold with cinematic lighting" [as follow-up to a perfume concept]).
+     CRITICAL: Do NOT force unnecessary clarification if the prompt is already clear, descriptive, or actionable. Generate immediately.
+   - NORMAL_CONVERSATION:
+     * General questions about photography, prompt writing, art techniques, resolution, aspect ratios, or casual chat.
+     * Vague or incomplete creative concepts where the user states a goal without visual direction (e.g., "I want to make a premium perfume advertisement", "I need a logo", "Help me create something cool for my game"). For these, respond conversationally with 1-2 focused creative options or questions to understand their desired visual aesthetic, mood, or setting (e.g. "Sure! What visual direction are you imagining? Dark and moody with gold accents, or clean, luminous, and botanical? ✨").
+     * Set optimized_prompt to null so NO image is generated until requirements are clear.
+   - IMAGE_EDITING: The user wants to modify, alter, transform, add, or remove visual elements from a previously generated or attached image (e.g. "make the room brighter", "change the car color to yellow", "add sunglasses", "turn into anime style", "eitar mathay lal tupi porao", "add a golden retriever").
+   - IMAGE_VARIATION: The user wants alternative versions/variations of a previously generated image (e.g. "give me 3 variations of this", "show different angles of the previous character").
+   - IMAGE_DISCUSSION: The user wants to discuss, critique, or understand a previous generated image (e.g. "Why does my previous image look unrealistic?", "What artistic style was used here?", "Explain the lighting in this picture").
+
+2. MULTI-LINGUAL & CONTEXT RETENTION:
+   - Understand English, Bengali, Banglish (e.g. 'eitar color blue kore daw', 'ekta chobi banao'), Hindi, and informal slang natively.
+   - If user makes a follow-up referring to an earlier image or discussion (e.g. user previously said 'I want to make a perfume ad' and now replies 'Luxury black and gold with cinematic lighting'), combine the complete conversation context into a rich, standalone visual prompt.
+   - For IMAGE_EDITING: synthesize a complete, standalone visual prompt that preserves the subject identity, posture, and core composition while seamlessly integrating the requested changes.
+   - For IMAGE_VARIATION: synthesize a visual prompt exploring alternative lighting, camera perspective, or framing while honoring the central subject.
+   - For IMAGE_GENERATION: expand and optimize the user's prompt into an artistic, cinematic visual instruction covering subject details, environment/background, composition, camera perspective, lighting, color palette, and textures. Do NOT add conflicting or unwanted objects.
+
+3. CONVERSATIONAL TONE & RESPONSE:
+   - Respond in the language and cadence of the user (natural English or warm Banglish/Bengali). Do NOT introduce yourself repeatedly in every turn.
+   - If intent is NORMAL_CONVERSATION or IMAGE_DISCUSSION: provide a brilliant, thorough, structured, witty, and helpful textual response. Do NOT generate an image.
+   - If intent is IMAGE_GENERATION, IMAGE_EDITING, or IMAGE_VARIATION: provide a concise, exciting 1-2 sentence response explaining your creative direction, alongside the optimized prompt.
+
+4. OUTPUT FORMAT:
+Output strictly valid JSON with this exact schema:
+{
+  "intent": "IMAGE_GENERATION" | "IMAGE_EDITING" | "IMAGE_VARIATION" | "NORMAL_CONVERSATION" | "IMAGE_DISCUSSION",
+  "message": "Direct, engaging conversational response to the user",
+  "optimized_prompt": "Exhaustive, high-detail English visual prompt for the image generation model (null if intent is NORMAL_CONVERSATION or IMAGE_DISCUSSION)",
+  "reference_image_used": boolean,
+  "visual_delta": "Short description of changes made if editing, or null",
+  "reasoning": "Internal reasoning notes"
+}`;
+
+/**
+ * Orchestrates an intelligent Image Workspace conversational turn using Mahi Engine (Standard)
+ * as the cognitive understanding and prompt optimization layer.
+ */
+export async function orchestrateImageWorkspaceTurn({
+  prompt,
+  conversationHistory = [],
+  conversationId = null,
+  model = null,
+  aspectRatio = '1:1',
+  count = 1,
+  referenceImage = null,
+  templateStyle = null,
+  abortSignal = null,
+  requestId = '-'
+}) {
+  const trimmedPrompt = (prompt || '').trim();
+  if (!trimmedPrompt) {
+    return {
+      intent: 'NORMAL_CONVERSATION',
+      message: 'Please provide a description or prompt for what you would like to create or discuss.',
+      optimizedPrompt: null,
+      visualDelta: null,
+      referenceImageUsed: false,
+      sourceImage: null
+    };
+  }
+
+  // Find recent image in context
+  const recentImageInHistory = findMostRecentImage(conversationHistory);
+  const activeReferenceImage = referenceImage || recentImageInHistory;
+  const isRefMod = isModificationOrReference(trimmedPrompt);
+
+  // Format conversation history for Mahi Engine
+  const formattedHistory = [];
+  if (Array.isArray(conversationHistory) && conversationHistory.length > 0) {
+    const recentTurns = conversationHistory.slice(-6);
+    for (const msg of recentTurns) {
+      if (!msg) continue;
+      const role = msg.role === 'assistant' ? 'assistant' : 'user';
+      let text = typeof msg.content === 'string' ? msg.content : (msg.text || '');
+      if (Array.isArray(msg.content)) {
+        text = msg.content.filter(p => p?.type === 'text').map(p => p.text).join(' ');
+      }
+      if (msg.imagePrompt) {
+        text = text ? `${text} [Generated Image Prompt: ${msg.imagePrompt}]` : `[Generated Image: ${msg.imagePrompt}]`;
+      } else if (msg.imageUrl) {
+        text = text ? `${text} [Image attached/generated]` : `[Image attached/generated]`;
+      }
+      if (text.trim()) {
+        formattedHistory.push({ role, content: text.trim().slice(0, 500) });
+      }
+    }
+  }
+
+  // Primary intelligence: Call Mahi Engine (Standard)
+  const mahiClient = getMahiClassifierClient();
+  let intelResult = null;
+
+  if (mahiClient) {
+    try {
+      const messages = [
+        { role: 'system', content: MAHI_IMAGE_INTELLIGENCE_PROMPT },
+        ...formattedHistory
+      ];
+
+      // If user provided a reference image directly with this turn, pass multimodal payload
+      if (referenceImage && isValidImageUrlString(referenceImage)) {
+        messages.push({
+          role: 'user',
+          content: [
+            { type: 'text', text: trimmedPrompt },
+            { type: 'image_url', image_url: { url: referenceImage } }
+          ]
+        });
+      } else {
+        messages.push({
+          role: 'user',
+          content: trimmedPrompt
+        });
+      }
+
+      logger.info('Invoking Mahi Engine (Standard) Image Intelligence', {
+        requestId,
+        promptLength: trimmedPrompt.length,
+        hasHistory: formattedHistory.length > 0,
+        hasReferenceImage: Boolean(activeReferenceImage)
+      });
+
+      const response = await mahiClient.chat.completions.create(
+        {
+          model: config.mahiEngine?.model || 'gemini-3.5-flash-lite',
+          messages,
+          temperature: 0.2,
+          max_tokens: 800,
+          response_format: { type: 'json_object' }
+        },
+        {
+          signal: abortSignal || undefined,
+          timeout: 15000
+        }
+      );
+
+      const raw = response.choices?.[0]?.message?.content?.trim();
+      intelResult = parseJsonSafely(raw);
+
+      if (intelResult) {
+        logger.info('Mahi Engine Image Intelligence classification succeeded', {
+          requestId,
+          intent: intelResult.intent,
+          hasOptimizedPrompt: Boolean(intelResult.optimized_prompt)
+        });
+      }
+    } catch (err) {
+      logger.warn('Mahi Engine Image Intelligence call failed, falling back to defensive pipeline', {
+        requestId,
+        error: err.message
+      });
+    }
+  }
+
+  // Normalize parsed intent or apply defensive fallback
+  if (intelResult && intelResult.intent) {
+    const validIntents = ['IMAGE_GENERATION', 'IMAGE_EDITING', 'IMAGE_VARIATION', 'NORMAL_CONVERSATION', 'IMAGE_DISCUSSION'];
+    let normalizedIntent = String(intelResult.intent).toUpperCase().trim();
+    if (!validIntents.includes(normalizedIntent)) {
+      if (normalizedIntent.includes('EDIT')) normalizedIntent = 'IMAGE_EDITING';
+      else if (normalizedIntent.includes('VAR')) normalizedIntent = 'IMAGE_VARIATION';
+      else if (normalizedIntent.includes('DISCUSS')) normalizedIntent = 'IMAGE_DISCUSSION';
+      else if (normalizedIntent.includes('CHAT') || normalizedIntent.includes('CONVERSATION')) normalizedIntent = 'NORMAL_CONVERSATION';
+      else normalizedIntent = 'IMAGE_GENERATION';
+    }
+
+    let finalPrompt = intelResult.optimized_prompt;
+    if ((normalizedIntent === 'IMAGE_GENERATION' || normalizedIntent === 'IMAGE_EDITING' || normalizedIntent === 'IMAGE_VARIATION') && (!finalPrompt || !finalPrompt.trim())) {
+      finalPrompt = cleanPrompt(trimmedPrompt);
+    }
+
+    return {
+      intent: normalizedIntent,
+      message: intelResult.message || (normalizedIntent === 'IMAGE_GENERATION' ? 'Creating your image...' : 'Processing your request...'),
+      optimizedPrompt: finalPrompt,
+      visualDelta: intelResult.visual_delta || null,
+      referenceImageUsed: Boolean(intelResult.reference_image_used || (activeReferenceImage && normalizedIntent === 'IMAGE_EDITING')),
+      sourceImage: activeReferenceImage
+    };
+  }
+
+  // Resilient Heuristic Fallback
+  const isQuestion = /\b(?:kisher|kiser|keno|kivabe|kibhabe|ki\s+bhabe|why|what|how\s+to|explain|tell\s+me|who|when)\b/i.test(trimmedPrompt);
+  const isCoding = /\b(?:html|css|javascript|react|npm|component|tag|attr|attribute|syntax|error|fix|debug|api)\b/i.test(trimmedPrompt);
+
+  if (isQuestion || isCoding) {
+    return {
+      intent: formattedHistory.length > 0 && activeReferenceImage ? 'IMAGE_DISCUSSION' : 'NORMAL_CONVERSATION',
+      message: 'Here is what you need to know: ' + trimmedPrompt,
+      optimizedPrompt: null,
+      visualDelta: null,
+      referenceImageUsed: false,
+      sourceImage: null
+    };
+  }
+
+  const isEdit = isRefMod || (activeReferenceImage && Boolean(formattedHistory.length));
+  const fallbackPrompt = cleanPrompt(trimmedPrompt);
+
+  return {
+    intent: isEdit ? 'IMAGE_EDITING' : 'IMAGE_GENERATION',
+    message: isEdit ? 'Applying modifications to your image with Mahi Engine visual fidelity...' : 'Synthesizing your visual prompt with Mahi Engine...',
+    optimizedPrompt: fallbackPrompt,
+    visualDelta: isEdit ? 'Contextual update' : null,
+    referenceImageUsed: Boolean(isEdit && activeReferenceImage),
+    sourceImage: activeReferenceImage
+  };
+}
+
 export default {
   IMAGE_GENERATION_TOOL,
   MULTIMODAL_INTENT_ROUTER_PROMPT,
+  MAHI_IMAGE_INTELLIGENCE_PROMPT,
   extractAttachedImageFromMessage,
   findMostRecentImage,
   isModificationOrReference,
@@ -1195,6 +1411,7 @@ export default {
   isImageIntent,
   couldBeImageIntent,
   detectAndEnrichImageIntent,
+  orchestrateImageWorkspaceTurn,
   cleanPrompt,
   sanitizePromptForImageEngine,
   executeImageGeneration,

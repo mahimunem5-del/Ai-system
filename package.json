@@ -7,6 +7,6 @@
     "dev": "npm --prefix server run dev",
     "start": "npm --prefix server start",
     "server": "npm --prefix server run dev",
-    "serve": "npx serve ."
+    "serve": "npx serve -c serve.json . -p 3000"
   }
 }
